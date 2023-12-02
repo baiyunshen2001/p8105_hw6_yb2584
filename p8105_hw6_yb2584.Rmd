@@ -111,6 +111,102 @@ model_results |>
 
 ## Problem 2
 
+For this problem, we’ll use the Central Park weather data. The code chunk below will download these data.
+```{r,message=FALSE}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
+
+The function to generate our bootstrap samples is
+```{r}
+boot_sample = function(df) {
+  sample_frac(df, replace = TRUE)
+}
+```
+
+Use 5000 bootstrap samples and, for each bootstrap sample, produce estimates of $R^2$ and $log(\beta_0*\beta_1)$.
+
+```{r}
+boot_straps_weather = 
+  tibble(strap_number = 1:5000) |> 
+  mutate(
+    strap_sample = map(strap_number, \(i) boot_sample(df = weather_df|>drop_na()))
+  )
+
+```
+
+Next, we use `broom::glance()` and `broom::tidy()` functions to get these two quantities.
+
+```{r}
+bootstrap_results_log_beta0_beta1 = 
+  boot_straps_weather |> 
+  mutate(
+    models = map(strap_sample, \(df) lm(tmax ~ tmin+prcp, data = df) ),
+    results = map(models, broom::tidy)) |> 
+  select(-strap_sample, -models) |>
+  unnest(results) |>
+  select(strap_number,term,estimate)|>
+  pivot_wider(
+    names_from = "term",
+    values_from = "estimate"
+  )|>
+  janitor::clean_names()|>
+  mutate(log_beta1_beta2=log(tmin*intercept))|>
+  pull(log_beta1_beta2)
+```
+
+```{r}
+bootstrap_results_r2 = 
+  boot_straps_weather |> 
+  mutate(
+    models = map(strap_sample, \(df) lm(tmax ~ tmin+prcp, data = df) ),
+    results = map(models, broom::glance)) |> 
+  select(-strap_sample, -models) |>
+  unnest(results) |>
+  pull(r.squared)
+```
+
+Then, we plot the distribution of these two quantities, and describe these in words
+
+```{r}
+ggplot(data.frame(bootstrap_results_r2),aes(x=bootstrap_results_r2))+
+  theme_bw() + 
+  geom_density()+
+  labs(
+    x="R^2",
+    title = "Distribution of R^2"
+  )
+```
 
 
+```{r}
+ggplot(data.frame(bootstrap_results_log_beta0_beta1),aes(x=bootstrap_results_log_beta0_beta1))+
+  theme_bw() + 
+  geom_density()+
+  labs(
+    x="log(beta0*beta1)",
+    title = "Distribution of log(beta0*beta1)"
+  )
+```
+
+From above two density plots the distribution of $R^2$ and $log(\beta_0*\beta_1)$, they under the normal distribution. Then, we are interested in the confidence interval of these two quantities. We use the 5000 bootstrap estimates, identify the 2.5% and 97.5% quantiles to provide a 95% confidence interval for $R^2$ and $log(\beta_0*\beta_1)$.
+
+```{r}
+CI_R2=quantile(bootstrap_results_r2,c(0.025,0.975))
+CI_log_beta0_beta1=quantile(bootstrap_results_log_beta0_beta1,c(0.025,0.975))
+CI_R2
+CI_log_beta0_beta1
+```
+Therefore, the 95% confidence interval for $R^2$ is (`r CI_R2`), the 95% confidence interval for $log(\beta_0*\beta_1)$ is (`r CI_log_beta0_beta1`).
+
+## Problem 3
 
