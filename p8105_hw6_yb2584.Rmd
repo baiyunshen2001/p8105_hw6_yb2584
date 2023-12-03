@@ -244,12 +244,6 @@ step_model=stepAIC(full_model)
 summary(step_model)
 ```
 
-```{r}
-data.frame(R_square=summary(step_model)$adj.r.squared,
-           AIC=AIC(step_model),
-           BIC=BIC(step_model),
-           PRESS=MPV::PRESS(step_model))
-```
 
 Form the result, we can know that some variable are not significant in this model. Therefore, we decide to drop these variables.
 
@@ -277,7 +271,8 @@ Some measurement of this model are
 data.frame(R_square_adjusted=summary(drop_outliers_model)$adj.r.squared,
            AIC=AIC(drop_outliers_model),
            BIC=BIC(drop_outliers_model),
-           PRESS=MPV::PRESS(drop_outliers_model))
+           PRESS=MPV::PRESS(drop_outliers_model))|>
+  knitr::kable()
 ```
 
 Next, we will show a plot of model residuals against fitted values 
