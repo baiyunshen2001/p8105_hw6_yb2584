@@ -30,9 +30,12 @@ theme_set(theme_minimal() + theme(legend.position = "bottom"))
 
 
 
-```{r load_libraries}
+```{r load_libraries,message=FALSE,warning=FALSE}
 library(tidyverse)
 library(modelr)
+library(mgcv)
+library(MASS)
+library(dplyr)
 ```
 
 ### Problem 1
@@ -52,7 +55,7 @@ homicide_df =
   ) |> 
   filter(victim_race %in% c("White", "Black")) |> 
   filter(!(city_state %in% c("Tulsa, AL", "Dallas, TX", "Phoenix, AZ", "Kansas City, MO"))) |> 
-  select(city_state, resolution, victim_age, victim_sex, victim_race)
+  dplyr::select(city_state, resolution, victim_age, victim_sex, victim_race)
 ```
 
 Next we fit a logistic regression model using only data from Baltimore, MD. We model `resolved` as the outcome and `victim_age`, `victim_sex`, and `victim_race` as predictors. We save the output as `baltimore_glm` so that we can apply `broom::tidy` to this object and obtain the estimate and confidence interval of the adjusted odds ratio for solving homicides comparing non-white victims to white victims.
@@ -69,7 +72,7 @@ baltimore_glm |>
     OR_CI_upper = exp(estimate + 1.96 * std.error),
     OR_CI_lower = exp(estimate - 1.96 * std.error)) |> 
   filter(term == "victim_sexMale") |> 
-  select(OR, OR_CI_lower, OR_CI_upper) |>
+  dplyr::select(OR, OR_CI_lower, OR_CI_upper) |>
   knitr::kable(digits = 3)
 ```
 
@@ -83,14 +86,14 @@ model_results =
     models = map(data, \(df) glm(resolution ~ victim_age + victim_sex + victim_race, 
                              family = binomial(), data = df)),
     tidy_models = map(models, broom::tidy)) |> 
-  select(-models, -data) |> 
+  dplyr::select(-models, -data) |> 
   unnest(cols = tidy_models) |> 
   mutate(
     OR = exp(estimate), 
     OR_CI_upper = exp(estimate + 1.96 * std.error),
     OR_CI_lower = exp(estimate - 1.96 * std.error)) |> 
   filter(term == "victim_sexMale") |> 
-  select(city_state, OR, OR_CI_lower, OR_CI_upper)
+  dplyr::select(city_state, OR, OR_CI_lower, OR_CI_upper)
 
 model_results |>
   slice(1:5) |> 
@@ -123,7 +126,7 @@ weather_df =
     name = recode(id, USW00094728 = "CentralPark_NY"),
     tmin = tmin / 10,
     tmax = tmax / 10) |>
-  select(name, id, everything())
+  dplyr::select(name, id, everything())
 ```
 
 The function to generate our bootstrap samples is
@@ -152,9 +155,9 @@ bootstrap_results_log_beta0_beta1 =
   mutate(
     models = map(strap_sample, \(df) lm(tmax ~ tmin+prcp, data = df) ),
     results = map(models, broom::tidy)) |> 
-  select(-strap_sample, -models) |>
+  dplyr::select(-strap_sample, -models) |>
   unnest(results) |>
-  select(strap_number,term,estimate)|>
+  dplyr::select(strap_number,term,estimate)|>
   pivot_wider(
     names_from = "term",
     values_from = "estimate"
@@ -170,7 +173,7 @@ bootstrap_results_r2 =
   mutate(
     models = map(strap_sample, \(df) lm(tmax ~ tmin+prcp, data = df) ),
     results = map(models, broom::glance)) |> 
-  select(-strap_sample, -models) |>
+  dplyr::select(-strap_sample, -models) |>
   unnest(results) |>
   pull(r.squared)
 ```
@@ -210,3 +213,124 @@ Therefore, the 95% confidence interval for $R^2$ is (`r CI_R2`), the 95% confide
 
 ## Problem 3
 
+In this problem, we will analyze data gathered to understand the effects of several variables on a child’s birthweight. Then, load and clean the data for regression analysis
+
+```{r,message=FALSE}
+birthweight=
+  read_csv("./data/birthweight.csv")|>
+  drop_na()|>
+  mutate(
+    babysex=factor(babysex),
+    frace=factor(frace),
+    malform=factor(malform),
+    mrace=factor(mrace)
+  )
+```
+This dataset consists of `r nrow(birthweight)` children and `r ncol(birthweight)` variables, and four of variables are categorical.
+
+Then, propose a regression model for birthweight. First step, we try the full model and see its performance.
+
+```{r}
+full_model=lm(bwt~.,data = birthweight)
+summary(full_model)
+```
+
+Then, we perform stepwise model selection by AIC to select variables.
+```{r}
+step_model=stepAIC(full_model)
+```
+
+```{r}
+summary(step_model)
+```
+
+```{r}
+data.frame(R_square=summary(step_model)$adj.r.squared,
+           AIC=AIC(step_model),
+           BIC=BIC(step_model),
+           PRESS=MPV::PRESS(step_model))
+```
+
+Form the result, we can know that some variable are not significant in this model. Therefore, we decide to drop these variables.
+
+```{r}
+step_model_update=update(step_model,.~.-fincome)
+summary(step_model_update)
+```
+Next, we drop the outliers of this model.
+```{r}
+SR = stdres(step_model_update)
+n = length(step_model_update$residuals) 
+p = length(step_model_update$coefficients)
+alpha = 0.05 
+t.cutoff = qt(1- alpha/2, n-p)
+outliers = which(abs(SR)>t.cutoff)
+new_birthweight = birthweight[-outliers,]
+drop_outliers_model=update(step_model_update,.~.,data=new_birthweight)
+summary(drop_outliers_model)
+```
+
+
+
+Some measurement of this model are
+```{r}
+data.frame(R_square_adjusted=summary(drop_outliers_model)$adj.r.squared,
+           AIC=AIC(drop_outliers_model),
+           BIC=BIC(drop_outliers_model),
+           PRESS=MPV::PRESS(drop_outliers_model))
+```
+
+Next, we will show a plot of model residuals against fitted values 
+```{r}
+pred=
+  new_birthweight|>
+  add_predictions(drop_outliers_model)|>
+  pull(pred)
+res=drop_outliers_model$residuals
+ggplot(aes(x = pred, y = res),data=data.frame(pred,res)) + 
+  geom_point() + 
+  geom_smooth(color="red")
+```
+Then, we compare our model to two others:
+
+- One using length at birth and gestational age as predictors (main effects only)
+- One using head circumference, length, sex, and all interactions (including the three-way interaction) between these
+
+```{r}
+model2=lm(bwt~blength+gaweeks,data = birthweight)
+model3=lm(bwt~bhead+blength+babysex+bhead:blength+bhead:babysex+blength:babysex+bhead:blength:babysex,data = birthweight)
+```
+
+Then, we perfome cross validation to compare these models.
+
+```{r}
+cv_df = 
+  crossv_mc(birthweight, 100) |> 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))|>
+  mutate(
+    drop_outliers_model  = map(train, \(df) drop_outliers_model),
+    model2  = map(train, \(df) model2),
+    model3  = map(train, \(df) model3)) |> 
+  mutate(
+    rmse_drop_outliers_model = map2_dbl(drop_outliers_model, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_model2 = map2_dbl(model2, test, \(mod, df) rmse(model = mod, data = df)),
+    rmse_model3 = map2_dbl(model3, test, \(mod, df) rmse(model = mod, data = df)))
+```
+
+Then, we drow a plot to compare the rmse of these three model
+
+```{r}
+cv_df |> 
+  dplyr::select(starts_with("rmse")) |>
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") |> 
+  mutate(model = fct_inorder(model)) |> 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
+```
+
+From this plot, we can see that our final model has less rmse, which means that our model has a better performance on prediction.
